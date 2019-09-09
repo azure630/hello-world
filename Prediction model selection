@@ -1,0 +1,237 @@
+install.packages("glmnet")
+library(glmnet); library(car)
+# section 6.8, page 263 JWHT
+college = read.csv("http://www-bcf.usc.edu/~gareth/ISL/College.csv")
+head(college)
+row.names(college) = college$X
+head(college)
+college$X=NULL
+set.seed(12345) # set the test set
+train = runif(nrow(college))<.5    # pick train/test split
+dim(college)
+table(train)  # Question 2 #425 in the test set, 352 in the train set
+hist(college$Apps)  # Question 3
+
+# Question 4
+fit = lm(Apps ~ ., college, subset=train) #subset - only use the training data
+plot(fit, pch=16)
+# fail the snow storm test, so we transform y; log / square root y; 
+
+# Question 5
+# I am overwriting a variable, which is not good practice, but it simplifies the code below substantially
+college$Apps = sqrt(college$Apps)  
+#college$Apps = log(college$Apps)
+hist(college$Apps)
+
+# Question 6: full model
+fit = lm(Apps ~ ., college, subset=train)
+plot(fit, which=1, pch=16, cex=.8)
+yhat = predict(fit, college[!train,]) #apply to the test set
+mean((college$Apps[!train] - yhat)^2)       # compute test set MSE
+summary(fit)
+vif(fit)
+
+# Question 7: stepwise model
+fit2 = step(fit)
+yhat = predict(fit2, college[!train,])
+mean((college$Apps[!train] - yhat)^2)       # compute test set MSE
+summary(fit)
+
+# Question 8: ridge model
+x = model.matrix(Apps ~ ., college) #ridge expects matrix, so model.matrix - convert formula into matrix
+dim(x)
+is.matrix(x)
+head(x,2)
+fit.ridge = glmnet(x[train,], college$Apps[train], alpha=0) #only training data to fit my model, alpha = 0 - give me ridge regression
+plot(fit.ridge, xvar="lambda") # one powerful predict and the others are useless
+fit.cv = cv.glmnet(x[train,], college$Apps[train], alpha=0) # find optimal lambda
+fit.cv$lambda.min        # optimal value of lambda
+abline(v=log(fit.cv$lambda.min))
+plot(fit.cv)          # plot MSE vs. log(lambda)
+yhat = predict(fit.ridge, s=fit.cv$lambda.min, newx=x[!train,])  # find yhat for best model
+mean((college$Apps[!train] - yhat)^2)      # compute test set MSE
+
+# Question 9: lasso model
+fit.lasso = glmnet(x[train,], college$Apps[train], alpha=1) #alpga = 1 gives me lasso regression
+plot(fit.lasso, xvar="lambda") #black line get 0
+plot(fit.ridge, xvar="lambda")
+fit.cv = cv.glmnet(x[train,], college$Apps[train], alpha=1)
+yhat = predict(fit.lasso, s=fit.cv$lambda.min, newx=x[!train,])
+mean((college$Apps[!train] - yhat)^2)       # compute test set MSE
+
+# Question 10: improved model with transformations
+plot(college[train,-1], pch=16, cex=.5)
+par(mfrow=c(2,4))
+for(i in 3:10){
+  plot(college[,i], college$Apps, pch=16, cex=.5, main=names(college)[i])
+  lines(smooth.spline(college[,i], college$Apps, df=5), col=2, lwd=2)
+} 
+#eroll: diminishing returns; - when i go to the right, y changes less and less; when k is less than one, you get diminishing returns
+#constant returns: linear fit. 
+#top10perc: increasing returns - how to fix? square
+
+for(i in 11:18){
+  plot(college[,i], college$Apps, pch=16, cex=.5, main=names(college)[i])
+  lines(smooth.spline(college[,i], college$Apps, df=5), col=2, lwd=2)
+}
+par(mfrow=c(1,1))
+plot(Apps ~ log(Accept), college, pch=16)
+plot(Apps ~ log(Enroll), college, pch=16)
+plot(Apps ~ log(F.Undergrad), college, pch=16)
+
+# forward stepwise model
+fit= lm(Apps ~ 1, college, subset=train)
+fit2 = step(fit, scope=~Private+Accept+sqrt(Accept)+log(Accept)
+        +Enroll+sqrt(Enroll)+log(Enroll)
+        +Top10perc+Top25perc
+        +F.Undergrad+sqrt(F.Undergrad)+log(F.Undergrad)
+        +P.Undergrad+sqrt(P.Undergrad)+log(P.Undergrad)
+        +Outstate+Room.Board
+        +Books+sqrt(Books)+log(Books)+Personal
+        +PhD+I(PhD^2)+Terminal+S.F.Ratio
+        +perc.alumni+Expend+Grad.Rate)
+plot(fit2, pch=16, cex=.5)
+#cook's distance: measure outliers
+yhat = predict(fit2, college[!train,])
+mean((college$Apps[!train] - yhat)^2)
+
+# ridge model
+x = model.matrix(Apps ~ Private+Accept+sqrt(Accept)+log(Accept)+Enroll+sqrt(Enroll)+log(Enroll)+Top10perc+Top25perc+F.Undergrad+sqrt(F.Undergrad)+log(F.Undergrad)+P.Undergrad+sqrt(P.Undergrad)+log(P.Undergrad)+Outstate+Room.Board+Books+sqrt(Books)+log(Books)+Personal+PhD+Terminal+S.F.Ratio+perc.alumni+Expend+Grad.Rate, college)
+fit.ridge = glmnet(x[train,], college$Apps[train], alpha=0)
+round(fit.ridge$beta[,100], 4)
+plot(fit.ridge, xvar="lambda")
+fit.cv = cv.glmnet(x[train,], college$Apps[train], alpha=0)
+abline(v=log(fit.cv$lambda.min))
+yhat = predict(fit.ridge, s=fit.cv$lambda.min, newx=x[!train,])
+mean((college$Apps[!train] - yhat)^2)
+
+# lasso model
+fit.lasso = glmnet(x[train,], college$Apps[train], alpha=1)
+fit.cv = cv.glmnet(x[train,], college$Apps[train], alpha=1)
+plot(fit.lasso, xvar="lambda"); abline(v=log(fit.cv$lambda.min))
+round(predict(fit.lasso, s=fit.cv$lambda.min, type="coefficients")[1:29,], 4)
+yhat = predict(fit.lasso, s=fit.cv$lambda.min, newx=x[!train,])
+mean((college$Apps[!train] - yhat)^2)
+
+# forward stepwise GAM model
+#GAM more automation
+library(gam)
+install.packages("gam")
+fit= gam(Apps ~ 1, data=college, subset=train)
+fit2 = step.Gam(fit, scope=list(
+  "Private"=~1+Private,
+    "Accept"=~1+Accept+s(Accept),
+    "Enroll"=~1+Enroll+s(Enroll),
+    "Top10perc"=~1+Top10perc+s(Top10perc),
+    "Top25perc"=~1+Top25perc+s(Top25perc),
+    "F.Undergrad"=~1+F.Undergrad+s(F.Undergrad),
+    "P.Undergrad"=~1+P.Undergrad+s(P.Undergrad),
+    "Outstate"=~1+Outstate+s(Outstate),
+    "Room.Board"=~1+Room.Board+s(Room.Board),
+    "Books" = ~1+Books+s(Books),
+    "Personal"=~1+Personal+s(Personal),
+    "PhD"=~1+PhD+s(PhD),
+    "Terminal"=~1+Terminal+s(Terminal),
+    "S.F.Ratio"=~1+S.F.Ratio+s(S.F.Ratio),
+    "perc.alumni"=~1+perc.alumni+s(perc.alumni),
+    "Expend"=~1+Expend+s(Expend),
+    "Grad.Rate"=~1+Grad.Rate+s(Grad.Rate)
+    ))
+summary(fit2)
+plot(fit2, ask=T, se=T)
+yhat = predict(fit2, college[!train,])
+mean((college$Apps[!train] - yhat)^2)
+plot(fit2$fitted.values, fit2$residuals, pch=16, cex=.7)
+lines(smooth.spline(fit2$fitted.values, fit2$residuals, df=5), col=2)
+
+# try tree
+install.packages("tree")
+library(tree)
+fit = tree(Apps ~ ., college[train,])
+fit
+plot(fit)
+text(fit)
+yhat = predict(fit, newdata=college[!train,])
+mean((college$Apps[!train] - yhat)^2) # 109.7879
+
+# overgrow the tree
+fit = tree(Apps ~ ., college[train,], mindev= .0001)
+fit
+plot(cv.tree(fit))
+yhat = predict(prune.tree(fit, best=10), newdata=college[!train,])
+mean((college$Apps[!train] - yhat)^2) # 
+yhat = predict(prune.tree(fit, best=20), newdata=college[!train,])
+mean((college$Apps[!train] - yhat)^2) # 
+yhat = predict(prune.tree(fit, best=30), newdata=college[!train,])
+mean((college$Apps[!train] - yhat)^2) # 
+
+# Random Forest
+library(randomForest)
+fit  = randomForest(x=college[train, -2], y=college$Apps[train], xtest=college[!train,-2], ntree=100)
+varImpPlot(fit)
+mean((college$Apps[!train] - fit$test$predicted)^2) # 65.30151 need more trees???
+
+# Random forest with more trees
+fit  = randomForest(x=college[train, -2], y=college$Apps[train], xtest=college[!train,-2], ntree=1000)
+mean((college$Apps[!train] - fit$test$predicted)^2) # 65.40401
+
+# now try bagging
+fit  = randomForest(x=college[train, -2], y=college$Apps[train], xtest=college[!train,-2], ntree=100, mtry=17)
+mean((college$Apps[!train] - fit$test$predicted)^2) #  53.37834 need more trees???
+
+# bagging with more trees
+fit  = randomForest(x=college[train, -2], y=college$Apps[train], xtest=college[!train,-2], ntree=500, mtry=17)
+mean((college$Apps[!train] - fit$test$predicted)^2) #  52.37941
+
+# bagging with even more trees
+fit  = randomForest(x=college[train, -2], y=college$Apps[train], xtest=college[!train,-2], ntree=1000, mtry=17)
+mean((college$Apps[!train] - fit$test$predicted)^2) #  53.52436
+
+# boosted tree
+library(gbm)
+fit = gbm(Apps ~ ., data=college[train,], interaction.depth=2, n.trees=500)
+yhat = predict(fit, newdata=college[!train,], n.trees=500)
+mean((college$Apps[!train] - yhat)^2) # 91.2509 Note: try more trees
+
+# boosted tree with more trees
+fit = gbm(Apps ~ ., data=college[train,], interaction.depth=2, n.trees=5000)
+yhat = predict(fit, newdata=college[!train,], n.trees=5000)
+mean((college$Apps[!train] - yhat)^2) # 70.51755 Note: try more trees
+
+# boosted tree with even more trees
+fit = gbm(Apps ~ ., data=college[train,], interaction.depth=2, n.trees=10000)
+yhat = predict(fit, newdata=college[!train,], n.trees=10000)
+mean((college$Apps[!train] - yhat)^2) # 63.70551 Note: try more trees
+
+# boosted tree with even more trees
+fit = gbm(Apps ~ ., data=college[train,], interaction.depth=2, n.trees=20000)
+yhat = predict(fit, newdata=college[!train,], n.trees=20000)
+mean((college$Apps[!train] - yhat)^2) # 63.70551 Note: try more trees
+
+# boosted tree with increased learning rate .01
+fit = gbm(Apps ~ ., data=college[train,], interaction.depth=2, n.trees=5000, shrinkage=.01)
+yhat = predict(fit, newdata=college[!train,], n.trees=5000)
+mean((college$Apps[!train] - yhat)^2) # 56.76147 
+
+# boosted tree with increased learning rate .01
+fit = gbm(Apps ~ ., data=college[train,], interaction.depth=2, n.trees=10000, shrinkage=.01)
+yhat = predict(fit, newdata=college[!train,], n.trees=10000)
+mean((college$Apps[!train] - yhat)^2) # 56.76147 
+
+# boosted tree with increased learning rate .02
+fit = gbm(Apps ~ ., data=college[train,], interaction.depth=2, n.trees=5000, shrinkage=.02)
+yhat = predict(fit, newdata=college[!train,], n.trees=5000)
+mean((college$Apps[!train] - yhat)^2) # 56.71696 
+
+# boosted tree with increased learning rate and more trees
+fit = gbm(Apps ~ ., data=college[train,], interaction.depth=2, n.trees=10000, shrinkage=.02)
+yhat = predict(fit, newdata=college[!train,], n.trees=10000)
+mean((college$Apps[!train] - yhat)^2) # 56.09985 
+
+# clean up
+rm(college, train, fit, yhat, fit2, fit.lasso, fit.ridge, fit.cv)
+
+x=rnorm(1000)
+hist(x)
+
+
